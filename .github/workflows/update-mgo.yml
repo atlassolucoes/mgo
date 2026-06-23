@@ -1,0 +1,49 @@
+name: Update MGO Dashboard
+
+on:
+  schedule:
+    - cron: "0 11,23 * * *"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install gspread google-auth
+
+      - name: Fetch data from Google Sheets
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+        run: python fetch_data.py
+
+      - name: Prepare deploy directory
+        run: |
+          mkdir -p _deploy
+          cp index.html _deploy/
+          touch _deploy/.nojekyll
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: _deploy
+          publish_branch: gh-pages
