@@ -3,12 +3,13 @@
 Fetches MGO dashboard data from Google Sheets and injects it into index.html.
 
 Reads:
-  [INSTAGRAM] Feed     → IG_POSTS  (summary + top 4 per month)
-  [INSTAGRAM] Stories  → IG_STORIES (monthly aggregates)
-  LinkedIn métricas    → LI.monthly: imp, cli, rea, com
-  LinkedIn page views  → LI.monthly: vis
-  LinkedIn seguidores  → LI.monthly: seg
-  LinkedIn concorrentes→ competitor-wrap HTML block
+  [INSTAGRAM] Feed       → IG_POSTS  (summary + top 4 per month)
+  [INSTAGRAM] Stories    → IG_STORIES (monthly aggregates)
+  LinkedIn métricas      → LI.monthly: imp, cli, rea, com
+  LinkedIn page views    → LI.monthly: vis
+  LinkedIn seguidores    → LI.monthly: seg
+  LinkedIn concorrentes  → competitor-wrap HTML block
+  [linkedin] publicacoes → LI.posts: top 4 por mês por impressões
 """
 
 import os, json, re, tempfile
@@ -274,6 +275,61 @@ def main():
                 "pub": parse_num(r.get("Total de publicações", 0) or r.get("Publicações", 0)),
             })
 
+    # ── LINKEDIN PUBLICAÇÕES (top posts por mês) ─────────────────────────────
+    ws_li_posts = None
+    for ws in wss:
+        if "linkedin" in ws.title.lower() and "publica" in ws.title.lower():
+            ws_li_posts = ws
+            break
+
+    li_posts_by_month = {}
+    if ws_li_posts:
+        print(f"  LI publicações: {ws_li_posts.title}")
+        seen = {}  # link → post (deduplicar mesmo post com múltiplas linhas)
+
+        for r in rows_to_dicts(ws_li_posts):
+            tipo_pub = str(r.get("Tipo de publicação", "")).strip()
+            if tipo_pub not in ("Orgânico", ""):
+                continue
+            link = str(r.get("Link da publicação", "")).strip()
+            if not link:
+                continue
+            date_str = parse_date(r.get("Criação", ""))
+            if not date_str:
+                continue
+            imp = parse_num(r.get("Impressões", 0))
+            if imp == 0:
+                continue
+
+            desc = str(r.get("Título da publicação", "")).strip()[:120]
+            tipo_c = str(r.get("Tipo de conteúdo", "")).strip()
+            tipo = "Reel" if tipo_c == "Vídeo" else "Imagem"
+
+            if link in seen:
+                if not seen[link]["desc"] and desc:
+                    seen[link]["desc"] = desc
+            else:
+                seen[link] = {
+                    "tipo": tipo,
+                    "date": datetime.strptime(date_str, "%Y-%m-%d").strftime("%d/%m/%Y"),
+                    "imp": imp,
+                    "rea": parse_num(r.get("Gostaram", 0)),
+                    "com": parse_num(r.get("Comentários", 0)),
+                    "comp": parse_num(r.get("Compartilhamentos", 0)),
+                    "desc": desc,
+                    "link": link,
+                    "_mk": month_key(date_str),
+                }
+
+        for post in seen.values():
+            mk = post.pop("_mk")
+            if mk:
+                li_posts_by_month.setdefault(mk, []).append(post)
+
+        for mk in li_posts_by_month:
+            li_posts_by_month[mk].sort(key=lambda p: p["imp"], reverse=True)
+            li_posts_by_month[mk] = li_posts_by_month[mk][:4]
+
     # ── ASSEMBLE LI.monthly ───────────────────────────────────────────────────
     all_li_months = sorted(set(list(li_m) + list(li_vis) + list(li_seg)))
     li_monthly = {}
@@ -307,13 +363,16 @@ def main():
 
     J = lambda obj: json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
-    # Preserve existing LI.posts (manually maintained)
-    li_posts_match = re.search(r'posts:\{(.*?)\}\s*\};\s*\nconst IG_POSTS', html, re.DOTALL)
-    li_posts_raw = "{" + li_posts_match.group(1) + "}" if li_posts_match else "{}"
+    # LI.posts: usa planilha se disponível, senão preserva o que está no HTML
+    if li_posts_by_month:
+        li_posts_js = J(li_posts_by_month)
+    else:
+        li_posts_match = re.search(r'posts:\{(.*?)\}\s*\};\s*\nconst IG_POSTS', html, re.DOTALL)
+        li_posts_js = "{" + li_posts_match.group(1) + "}" if li_posts_match else "{}"
 
     data_block = (
         "// ── DATA ──\n"
-        f"const LI={{monthly:{J(li_monthly)},posts:{li_posts_raw}}};\n\n"
+        f"const LI={{monthly:{J(li_monthly)},posts:{li_posts_js}}};\n\n"
         f"const IG_POSTS={J(ig_posts)};\n"
         f"const IG_STORIES={J(ig_stories)};\n\n"
         f"const LABELS={J(labels)};\n"
@@ -365,6 +424,8 @@ def main():
     print(f"  IG Feed:     {ig_total} posts em {len(ig_posts)} meses")
     print(f"  IG Stories:  {st_total} stories em {len(ig_stories)} meses")
     print(f"  LI Monthly:  {len(li_monthly)} meses")
+    li_posts_total = sum(len(v) for v in li_posts_by_month.values())
+    print(f"  LI Posts:    {li_posts_total} posts em {len(li_posts_by_month)} meses")
     print(f"  Concorrentes:{len(competitors)} empresas")
     print(f"  Mês atual:   {latest}")
     print(f"  Atualizado:  {datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}")
