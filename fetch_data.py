@@ -392,6 +392,125 @@ def main():
     if latest:
         html = re.sub(r'let cur="[^"]*"', f'let cur="{latest}"', html)
 
+    # ── LINKEDIN AUDIÊNCIA (demografia) ──────────────────────────────────────
+    FUNC_EMOJI = {
+        "Operações":"⚙️","Engenharia":"🔧","Tecnologia da informação":"💻",
+        "Administração":"📋","Desenvolvimento de negócios":"📈","Vendas":"💼",
+        "Gestão de projetos":"📊","Controle de qualidade":"✅","Recursos humanos":"👥",
+        "Financeiro":"💰","Marketing":"📣","Pesquisa":"🔬","Educação":"🎓",
+    }
+    NIVEL_EMOJI = {
+        "Iniciante":"🟢","Sênior":"🟡","Gerente":"🔵","Diretor":"🔴",
+        "Dirigente (CEO, COO, CFO, CMO)":"⭐","Proprietário":"🏆",
+        "Vice-Presidente":"🔷","Treinamento":"📚",
+    }
+
+    def read_demo_tab(name_keyword):
+        for ws in wss:
+            if name_keyword.lower() in ws.title.lower():
+                rows = ws.get_all_values()
+                if not rows:
+                    return []
+                headers = [h.strip() for h in rows[0]]
+                result = []
+                for row in rows[1:]:
+                    padded = row + [""] * (len(headers) - len(row))
+                    d = dict(zip(headers, padded))
+                    name = str(list(d.values())[0]).strip()
+                    count = parse_num(list(d.values())[1]) if len(d) > 1 else 0
+                    if name and count > 0:
+                        result.append((name, count))
+                result.sort(key=lambda x: x[1], reverse=True)
+                return result
+        return []
+
+    def build_bars(items, top_n=5, emoji_map=None, prefix=""):
+        items = items[:top_n]
+        if not items:
+            return ""
+        max_val = items[0][1]
+        bars = []
+        for i, (name, count) in enumerate(items):
+            color = "var(--li)" if i < 2 else "var(--navy-muted)"
+            pct = round(count / max_val * 100) if max_val else 0
+            em = ""
+            if emoji_map:
+                em = emoji_map.get(name, "") + " " if emoji_map.get(name) else ""
+            elif prefix:
+                em = prefix + " "
+            display = em + name
+            bars.append(
+                f'<div><div class="bar-hdr"><div class="bar-name">{display}</div>'
+                f'<div class="bar-num">{fmt_br(count)}</div></div>'
+                f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;background:{color}"></div></div></div>'
+            )
+        return "\n        ".join(bars)
+
+    demo_func    = read_demo_tab("função")
+    demo_setor   = read_demo_tab("setor")
+    demo_tamanho = read_demo_tab("tamanho")
+    demo_nivel   = read_demo_tab("nivel")
+    demo_local   = read_demo_tab("localidade")
+
+    # Total de seguidores da MGO (do card de concorrentes)
+    total_seg_mgo = next((c["seg"] for c in competitors if "MGO" in c["name"].upper()), 0)
+    total_seg_str = fmt_br(total_seg_mgo) if total_seg_mgo else "—"
+
+    if any([demo_func, demo_setor, demo_tamanho, demo_nivel, demo_local]):
+        print(f"  LI Audiência: func={len(demo_func)} setor={len(demo_setor)} "
+              f"tam={len(demo_tamanho)} nivel={len(demo_nivel)} local={len(demo_local)}")
+
+        audience_section = f"""<section id="li-audience">
+  <div class="sec-hdr"><div class="sec-tag li-tag">Audiência</div><div class="sec-title">Perfil dos Seguidores LinkedIn ({total_seg_str} total)</div><div class="sec-line"></div></div>
+  <div class="demo-grid">
+    <div class="chart-card">
+      <div class="chart-title">Função dos seguidores</div>
+      <div class="chart-sub">Por área de atuação profissional</div>
+      <div class="bar-list">
+        {build_bars(demo_func, 5, emoji_map=FUNC_EMOJI)}
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Setor de atuação</div>
+      <div class="chart-sub">Indústrias dos seguidores</div>
+      <div class="bar-list">
+        {build_bars(demo_setor, 5)}
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Tamanho das empresas</div>
+      <div class="chart-sub">Porte das organizações dos seguidores</div>
+      <div class="bar-list">
+        {build_bars(demo_tamanho, 5)}
+      </div>
+    </div>
+  </div>
+  <div class="charts-2" style="margin-top:14px">
+    <div class="chart-card">
+      <div class="chart-title">Nível de experiência</div>
+      <div class="chart-sub">Senioridade dos seguidores</div>
+      <div class="bar-list">
+        {build_bars(demo_nivel, 5, emoji_map=NIVEL_EMOJI)}
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Top cidades dos seguidores</div>
+      <div class="chart-sub">Concentração geográfica</div>
+      <div class="bar-list">
+        {build_bars(demo_local, 5, prefix="📍")}
+      </div>
+    </div>
+  </div>
+</section>"""
+
+        html = re.sub(
+            r'<section id="li-audience">.*?</section>',
+            audience_section,
+            html,
+            flags=re.DOTALL,
+            count=1,
+        )
+
     # ── UPDATE COMPETITOR CARDS ───────────────────────────────────────────────
     if competitors:
         def build_card(c):
